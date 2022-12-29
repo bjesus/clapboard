@@ -15,6 +15,10 @@ Clapboard is a simple clipboard manager for Wayland, built in Rust. It saves a h
 - Run `cargo build --release`
 - copy the `clapboard` executable to your PATH
 
+## Arch Linux
+
+Clapboard is available on AUR as [clapboard-git](https://aur.archlinux.org/packages/clapboard-git).
+
 # Usage
 
 - `clapboard store STRING` should run whenever something is copied. If you're using Sway, just add this to your `~/.config/sway/config`:
