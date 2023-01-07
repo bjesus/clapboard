@@ -2,6 +2,8 @@
 
 Clapboard is a simple clipboard manager for Wayland, built in Rust. It saves a history of your clipboard usage, and lets you paste things you've copied earlier. It also lets you configure "favorite" pastes for strings you need often. For example, you can set favorites with your address, phone number, email address etc - and they'll all become just a few clicks away.
 
+[video.webm](https://user-images.githubusercontent.com/55081/211161880-63bb628c-e43d-4e46-9e77-85b5cabb8318.webm)
+
 # Requirements
 
 - [tofi](https://github.com/philj56/tofi) or any other dmenu-like program ([wofi](https://hg.sr.ht/~scoopta/wofi), [rofi](https://github.com/lbonn/rofi), [dmenu](https://github.com/nyyManni/dmenu-wayland))
@@ -45,3 +47,7 @@ history_size = 50
 # You can add your favorite clipboard pastes here like this:
 # "some key" = "some value"
 ```
+
+# Funny fact
+
+Clapboard was originally built in Python and later converted to Rust with the help of ChatGPT.
