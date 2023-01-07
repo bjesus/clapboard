@@ -74,6 +74,7 @@ fn main() {
 
     let history: Vec<String> = history
         .iter()
+        .rev()
         .skip(
             history
                 .len()

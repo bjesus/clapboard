@@ -4,24 +4,24 @@ Clapboard is a simple clipboard manager for Wayland, built in Rust. It saves a h
 
 [video.webm](https://user-images.githubusercontent.com/55081/211161880-63bb628c-e43d-4e46-9e77-85b5cabb8318.webm)
 
-# Requirements
+## Requirements
 
 - [tofi](https://github.com/philj56/tofi) or any other dmenu-like program ([wofi](https://hg.sr.ht/~scoopta/wofi), [rofi](https://github.com/lbonn/rofi), [dmenu](https://github.com/nyyManni/dmenu-wayland))
 - [wl-clipboard](https://github.com/bugaevc/wl-clipboard)
 
-# Installation
+## Installation
 
-## From source
+### From source
 
 - `git clone` the repository
 - Run `cargo build --release`
 - copy the `clapboard` executable to your PATH
 
-## Arch Linux
+### Arch Linux
 
 Clapboard is available on AUR as [clapboard-git](https://aur.archlinux.org/packages/clapboard-git).
 
-# Usage
+## Usage
 
 - `clapboard store STRING` should run whenever something is copied. If you're using Sway, just add this to your `~/.config/sway/config`:
 
@@ -35,7 +35,7 @@ exec wl-paste -p --watch bash -c "xargs -0 -I{} clapboard store {}"
 bindsym XF86Favorites exec clapboard
 ```
 
-# Configuration
+## Configuration
 
 Below is the default Clapboard configuration. If you want to change it, create a similar file at `~/.config/clapboard/config.toml`
 
@@ -48,6 +48,6 @@ history_size = 50
 # "some key" = "some value"
 ```
 
-# Funny fact
+## Fun fact
 
 Clapboard was originally built in Python and later converted to Rust with the help of ChatGPT.
