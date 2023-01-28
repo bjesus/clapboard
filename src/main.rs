@@ -72,16 +72,7 @@ fn main() {
         .map(|line| line.to_owned())
         .collect();
 
-    let history: Vec<String> = history
-        .iter()
-        .rev()
-        .skip(
-            history
-                .len()
-                .saturating_sub(usize::try_from(history_size).unwrap()),
-        )
-        .cloned()
-        .collect();
+    let history: Vec<String> = history.iter().rev().take(history_size).cloned().collect();
 
     let history_clone = history.clone();
     let mut event_menu = history;
