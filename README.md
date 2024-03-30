@@ -1,6 +1,6 @@
 # Clapboard - clipboard manager that makes you clap 👏
 
-Clapboard is a simple clipboard manager for Wayland, built in Rust. It saves a history of your clipboard usage, and lets you paste things you've copied earlier. It also lets you configure "favorite" pastes for strings you need often. For example, you can set favorites with your address, phone number, email address etc - and they'll all become just a few clicks away.
+Clapboard is a simple clipboard manager for Wayland, built in Rust. It saves a history of your clipboard usage, and lets you paste things you've copied earlier. It also lets you configure "favorite" pastes for strings you need often. For example, you can set favorites with your address, phone number, email address etc - and they'll all become just a few clicks away. It also supports files and images.
 
 [video.webm](https://user-images.githubusercontent.com/55081/211161880-63bb628c-e43d-4e46-9e77-85b5cabb8318.webm)
 
