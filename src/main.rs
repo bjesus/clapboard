@@ -1,8 +1,10 @@
 use atty;
 use base64::prelude::*;
 use std::collections::VecDeque;
+use std::env;
 use std::fs;
 use std::io::{stdin, BufRead, BufReader, Read, Write};
+use std::process::exit;
 use std::process::{Command, Stdio};
 use std::time::{SystemTime, UNIX_EPOCH};
 use toml::Value;
@@ -37,33 +39,37 @@ fn main() {
         .and_then(|v| v.as_integer())
         .unwrap_or(50) as usize;
 
-    if atty::isnt(atty::Stream::Stdin) {
-        let stdin = stdin();
-        let mut handle = stdin.lock();
-        let mut input = Vec::new();
-        if handle.read_to_end(&mut input).unwrap() > 0 {
-            let entry = match String::from_utf8(input) {
-                Ok(v) => v,
-                Err(e) => String::from(format!(
-                    "file:{} {}",
-                    timestamp,
-                    BASE64_STANDARD.encode(e.into_bytes())
-                )),
-            };
-            let mut clipboard_history = fs::OpenOptions::new()
-                .append(true)
-                .open(&history_path)
+    let args: Vec<String> = env::args().collect();
+    if args.len() > 1 && args[1] == "store" {
+        if atty::isnt(atty::Stream::Stdin) {
+            let stdin = stdin();
+            let mut handle = stdin.lock();
+            let mut input = Vec::new();
+            if handle.read_to_end(&mut input).unwrap() > 0 {
+                let entry = match String::from_utf8(input) {
+                    Ok(v) => v,
+                    Err(e) => String::from(format!(
+                        "file:{} {}",
+                        timestamp,
+                        BASE64_STANDARD.encode(e.into_bytes())
+                    )),
+                };
+                let mut clipboard_history = fs::OpenOptions::new()
+                    .append(true)
+                    .open(&history_path)
+                    .unwrap();
+                writeln!(
+                    clipboard_history,
+                    "{}",
+                    entry.replace("\r", "\\r").replace("\n", "\\n")
+                )
                 .unwrap();
-            writeln!(
-                clipboard_history,
-                "{}",
-                entry.replace("\r", "\\r").replace("\n", "\\n")
-            )
-            .unwrap();
-            truncate_file(&history_path.to_str().unwrap(), history_size).unwrap();
+                truncate_file(&history_path.to_str().unwrap(), history_size).unwrap();
 
-            return;
+                return;
+            }
         }
+        exit(0)
     }
 
     let default_launcher = vec!["tofi", "--fuzzy-match=true", "--prompt-text=clapboard: "];

@@ -23,11 +23,11 @@ Clapboard is available on AUR as [clapboard-git](https://aur.archlinux.org/packa
 
 ## Usage
 
-- `echo "something" | clapboard` should run whenever something is copied. If you're using Sway, just add this to your `~/.config/sway/config`:
+- `echo "something" | clapboard store` should run whenever something is copied. If you're using Sway, just add this to your `~/.config/sway/config`:
 
 ```
-exec wl-paste --watch clapboard
-exec wl-paste -p --watch clapboard
+exec wl-paste --watch clapboard store
+exec wl-paste -p --watch clapboard store
 ```
 
 - Optionally, bind some key to run `clapboard`. I'm binding the Favorites key in Sway like this:
