@@ -1,6 +1,6 @@
 [package]
 name = "clapboard"
-version = "0.1.1"
+version = "0.2.0"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
@@ -8,3 +8,5 @@ edition = "2021"
 [dependencies]
 xdg = "2.4.1"
 toml = "0.5.10"
+base64 = "0.22.0"
+atty = "0.2.14"
