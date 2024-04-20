@@ -32,9 +32,9 @@ fn main() {
         .expect("cannot create configuration directory");
 
     let toml_string = fs::read_to_string(config_path).unwrap_or(String::from(""));
-    let value: Value = toml::from_str(&toml_string).unwrap();
+    let config: Value = toml::from_str(&toml_string).unwrap();
 
-    let history_size = value
+    let history_size = config
         .get("history_size")
         .and_then(|v| v.as_integer())
         .unwrap_or(50) as usize;
@@ -79,13 +79,13 @@ fn main() {
         .map(|x| Value::String(x.to_string()))
         .collect();
     let default_launcher_value = Value::Array(default_launcher_values);
-    let launcher = value
+    let launcher = config
         .get("launcher")
         .unwrap_or_else(|| &default_launcher_value)
         .as_array();
 
     let default_favorites_value = Value::Table(toml::value::Table::new());
-    let favorites = value
+    let favorites = config
         .get("favorites")
         .unwrap_or_else(|| &default_favorites_value)
         .as_table()
@@ -117,8 +117,8 @@ fn main() {
     }
 
     let input = event_menu.join("\n").to_string();
-
-    let mut command = Command::new(launcher.unwrap()[0].as_str().unwrap());
+    let command_name = launcher.unwrap()[0].as_str().unwrap();
+    let mut command = Command::new(command_name);
     for arg in &launcher.unwrap()[1..] {
         command.arg(arg.as_str().unwrap());
     }
@@ -129,17 +129,21 @@ fn main() {
         .spawn()
         .expect("Failed to start command");
 
-    let mut stdin = child.stdin.take().expect("Failed to open stdin for tofi");
+    let mut stdin = child
+        .stdin
+        .take()
+        .expect(&format!("Failed to open stdin for {}", command_name));
     std::thread::spawn(move || {
         stdin
             .write_all(input.as_bytes())
-            .expect("Failed to write to tofi's stdin");
+            .expect("Failed to write to your launcher's stdin");
     });
 
     let output = child
         .wait_with_output()
-        .expect("Failed to read stdout from tofi");
-    let result = String::from_utf8(output.stdout).expect("Invalid UTF-8 returned from tofi");
+        .expect(&format!("Failed to read stdout from {}", command_name));
+    let result = String::from_utf8(output.stdout)
+        .expect(&format!("Invalid UTF-8 returned from {}", command_name));
     if result.len() > 0 {
         for (name, value) in favorites {
             if result.trim().eq(name.trim()) {
