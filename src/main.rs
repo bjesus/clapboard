@@ -92,7 +92,7 @@ fn main() {
         .unwrap();
 
     let full_history: Vec<String> = fs::read_to_string(&history_path)
-        .unwrap()
+        .unwrap_or(String::from(""))
         .lines()
         .map(|line| line.to_owned())
         .collect();
@@ -183,16 +183,27 @@ fn truncate_file(path: &str, history_size: usize) -> std::io::Result<()> {
     let f = fs::File::open(path)?;
     let reader = BufReader::new(&f);
 
-    let lines: Vec<String> = reader.lines().collect::<Result<_, _>>()?;
-
     let mut last_lines = VecDeque::new();
-    for line in lines {
-        if let Some(position) = last_lines.iter().position(|x| *x == line) {
-            last_lines.remove(position);
-        }
-        last_lines.push_back(line);
-        if last_lines.len() > history_size {
-            last_lines.pop_front();
+    for line_result in reader.lines() {
+        match line_result {
+            Ok(line) => {
+                // Remove duplicates by removing previous occurrences
+                if let Some(position) = last_lines.iter().position(|x| *x == line) {
+                    last_lines.remove(position);
+                }
+
+                // Add the line to the end
+                last_lines.push_back(line);
+
+                // Maintain only the last `history_size` lines
+                if last_lines.len() > history_size {
+                    last_lines.pop_front();
+                }
+            }
+            Err(_) => {
+                // Skip lines that can't be read
+                continue;
+            }
         }
     }
 
