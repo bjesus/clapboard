@@ -1,6 +1,6 @@
 [package]
 name = "clapboard"
-version = "0.2.2"
+version = "1.0.0"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
@@ -8,5 +8,8 @@ edition = "2021"
 [dependencies]
 xdg = "2.4.1"
 toml = "0.5.10"
-base64 = "0.22.0"
-atty = "0.2.14"
+wl-clipboard-rs = "0.9.1"
+wayland-clipboard-listener = "0.2.6"
+clap = { version = "4.5.23", features = ["derive"] }
+tokio = { version = "1.42.0", features = ["full"] }
+indexmap = { version = "2.7.0", features = ["std"] }
