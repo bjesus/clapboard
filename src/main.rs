@@ -240,11 +240,17 @@ async fn listen_to_clipboard(paste_type: &str, cache_dir: PathBuf, history_size:
                 Ok((mut reader, _)) => {
                     let path = format!("{}{}", cache_dir.to_str().unwrap(), timestamp);
                     fs::create_dir_all(Path::new(&path)).unwrap();
-                    copy(
-                        &mut reader,
-                        &mut File::create(format!("{}/{}", &path, mime.replace("/", "."))).unwrap(),
-                    )
-                    .unwrap();
+                    let file_path = format!("{}/{}", &path, mime.replace("/", "."));
+                    match File::create(&file_path) {
+                        Ok(mut file) => {
+                            if let Err(e) = copy(&mut reader, &mut file) {
+                                eprintln!("Failed to copy content to {}: {}", file_path, e);
+                            }
+                        }
+                        Err(e) => {
+                            eprintln!("Failed to create file {}: {}", file_path, e);
+                        }
+                    }
                 }
                 Err(err) => eprintln!("Clipboard {paste_type:?} error: {}", err),
             }
