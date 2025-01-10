@@ -269,7 +269,13 @@ fn clean_history(directory: &Path, max: usize) -> io::Result<()> {
     for (index, entry) in entries.into_iter().enumerate() {
         if index > max {
             let path = entry.path();
-            if path.is_dir() {
+            if path.is_dir()
+                && !path
+                    .file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .starts_with('.')
+            {
                 fs::remove_dir_all(&path)?;
             }
         }
