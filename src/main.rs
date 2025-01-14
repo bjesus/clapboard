@@ -152,7 +152,6 @@ async fn main() {
             }
 
             let input = data.keys().cloned().collect::<Vec<_>>().join("\n");
-            println!("input is: {}", &input);
             let command_name = launcher.unwrap()[0].as_str().unwrap();
             let mut command = Command::new(command_name);
             for arg in &launcher.unwrap()[1..] {
@@ -167,7 +166,7 @@ async fn main() {
                     child.stdin.as_mut().unwrap().write_all(input.as_bytes())?;
                     child.wait_with_output()
                 })
-                .unwrap();
+            .unwrap_or_else(|_| panic!("Cannot start your launcher, please confirm you have {} installed or configure another one", command_name));
 
             let mut result = String::from_utf8_lossy(&output.stdout).into_owned();
             result.pop(); // Remove trailing new line
