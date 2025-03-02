@@ -1,13 +1,12 @@
 use clap::Parser;
 use std::{
-    collections::HashMap,
+    collections::{BTreeMap, HashMap},
     fs::{self, File},
     io::{self, Read, Write},
     path::Path,
     process::{Command, Stdio},
     time::{SystemTime, UNIX_EPOCH},
 };
-use toml::{value::Table, Value};
 use wayland_clipboard_listener::{WlClipboardPasteStream, WlListenType};
 use wl_clipboard_rs::copy::{MimeSource, MimeType as CopyMimeType, Options, Source};
 use wl_clipboard_rs::paste::{get_contents, ClipboardType, MimeType as PasteMimeType, Seat};
@@ -24,6 +23,25 @@ struct Args {
     record: Option<String>,
 }
 
+#[derive(serde::Deserialize, serde::Serialize, Clone, Debug, PartialEq, Eq)]
+struct Config {
+    #[serde(default = "Config::default_launcher")]
+    launcher: Vec<String>,
+    #[serde(default)]
+    favorites: BTreeMap<String, String>,
+    #[serde(default = "Config::default_hist_size")]
+    history_size: usize,
+}
+impl Config {
+    fn default_launcher() -> Vec<String> {
+        let default_launcher = ["tofi", "--fuzzy-match=true", "--prompt-text=clapboard: "];
+        default_launcher.iter().map(ToString::to_string).collect()
+    }
+    const fn default_hist_size() -> usize {
+        50
+    }
+}
+
 fn main() -> Res<()> {
     let args = Args::parse();
 
@@ -33,11 +51,7 @@ fn main() -> Res<()> {
         .expect("cannot create configuration directory");
 
     let toml_string = fs::read_to_string(config_path).unwrap_or_default();
-    let value: Value = toml::from_str(&toml_string)?;
-
-    let defaults = get_config_defaults();
-    let (launcher, history_size, favorites) =
-        read_config(&value, defaults.0, defaults.1, &defaults.2);
+    let config: Config = basic_toml::from_str(&toml_string)?;
 
     let cache_dir = xdg_dirs.get_cache_home();
 
@@ -59,7 +73,7 @@ fn main() -> Res<()> {
             .map(|&paste_type| {
                 std::thread::spawn({
                     let cache_dir = cache_dir.clone();
-                    move || listen_to_clipboard(paste_type, cache_dir, history_size).unwrap()
+                    move || listen_to_clipboard(paste_type, cache_dir, config.history_size).unwrap()
                 })
             })
             .collect();
@@ -69,47 +83,12 @@ fn main() -> Res<()> {
             let _ = task.join().inspect_err(|e| eprintln!("error: {e:?}"));
         }
     } else {
-        history(&launcher, favorites, cache_dir)?;
+        history(&config, cache_dir)?;
     }
     Ok(())
 }
 
-fn get_config_defaults() -> (Vec<String>, usize, Value) {
-    let default_launcher = ["tofi", "--fuzzy-match=true", "--prompt-text=clapboard: "];
-    let default_launcher_values = default_launcher.iter().map(ToString::to_string).collect();
-
-    let default_favorites_value = Value::Table(Table::new());
-    (default_launcher_values, 50, default_favorites_value)
-}
-
-fn read_config<'a>(
-    value: &'a Value,
-    default_launcher: Vec<String>,
-    default_hist_size: usize,
-    default_favorites: &'a Value,
-) -> (Vec<String>, usize, &'a Table) {
-    let launcher = value.get("launcher").map_or(default_launcher, |l| {
-        l.as_array()
-            .unwrap()
-            .iter()
-            .map(|j| j.as_str().unwrap().to_string())
-            .collect::<Vec<_>>()
-    });
-
-    let history_size = value
-        .get("history_size")
-        .and_then(Value::as_integer)
-        .map_or(default_hist_size, |n| n as usize);
-
-    let favorites = value
-        .get("favorites")
-        .unwrap_or(default_favorites)
-        .as_table()
-        .unwrap();
-    (launcher, history_size, favorites)
-}
-
-fn history(launcher: &[String], favorites: &Table, cache_dir: impl AsRef<Path>) -> Res<()> {
+fn history(config: &Config, cache_dir: impl AsRef<Path>) -> Res<()> {
     let mut data = HashMap::new();
 
     let mut entries: Vec<_> = fs::read_dir(&cache_dir)?.flatten().collect();
@@ -144,15 +123,14 @@ fn history(launcher: &[String], favorites: &Table, cache_dir: impl AsRef<Path>) 
             }
         }
     }
-    for (key, value) in favorites {
-        data.entry(key.parse()?)
-            .or_insert_with(|| value.as_str().unwrap().to_string());
+    for (key, value) in &config.favorites {
+        data.entry(key.parse()?).or_insert(value.clone());
     }
 
     let input = data.keys().cloned().collect::<Vec<_>>().join("\n");
-    let command_name = &launcher[0];
+    let command_name = &config.launcher[0];
     let mut command = Command::new(command_name);
-    for arg in &launcher[1..] {
+    for arg in &config.launcher[1..] {
         command.arg(arg);
     }
 
@@ -172,7 +150,7 @@ fn history(launcher: &[String], favorites: &Table, cache_dir: impl AsRef<Path>) 
     }
     let mut opts = Options::new();
     opts.foreground(true); // We need to keep the process alive for pasting to work
-    if favorites.contains_key(&result) {
+    if config.favorites.contains_key(&result) {
         opts.copy(
             Source::Bytes(
                 data.get(&result)
@@ -185,23 +163,22 @@ fn history(launcher: &[String], favorites: &Table, cache_dir: impl AsRef<Path>) 
         )
         .expect("Failed to copy to clipboard");
     } else {
-        let prefix = data.get(&result).unwrap().as_str();
-        let sources: Vec<MimeSource> =
-            fs::read_dir(format!("{}{prefix}", cache_dir.as_ref().display()))?
-                .flatten()
-                .filter_map(|entry| {
-                    let path = entry.path();
-                    let mime_type = path
-                        .file_name()?
-                        .to_string_lossy()
-                        .to_string()
-                        .replacen('.', "/", 1);
-                    fs::read(&path).ok().map(|contents| MimeSource {
-                        source: Source::Bytes(contents.into()),
-                        mime_type: CopyMimeType::Specific(mime_type),
-                    })
+        let prefix = data.get(&result).unwrap();
+        let sources = fs::read_dir(format!("{}{prefix}", cache_dir.as_ref().display()))?
+            .flatten()
+            .filter_map(|entry| {
+                let path = entry.path();
+                let mime_type = path
+                    .file_name()?
+                    .to_string_lossy()
+                    .to_string()
+                    .replacen('.', "/", 1);
+                fs::read(&path).ok().map(|contents| MimeSource {
+                    source: Source::Bytes(contents.into()),
+                    mime_type: CopyMimeType::Specific(mime_type),
                 })
-                .collect();
+            })
+            .collect::<Vec<_>>();
 
         if !sources.is_empty() {
             opts.copy_multi(sources)

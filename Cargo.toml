@@ -7,7 +7,8 @@ edition = "2021"
 
 [dependencies]
 xdg = "2.5.2"
-toml = { version = "0.8.20", default-features = false, features = ["parse"] }
 wl-clipboard-rs = "0.9.1"
 wayland-clipboard-listener = "0.2.6"
 clap = { version = "4.5.31", features = ["derive"] }
+basic-toml = "0.1.9"
+serde = { version = "1.0.218", features = ["derive"] }
