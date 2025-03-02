@@ -5,9 +5,9 @@ use std::{
     io::{self, copy, Read, Write},
     path::{Path, PathBuf},
     process::{Command, Stdio},
+    thread,
     time::{SystemTime, UNIX_EPOCH},
 };
-use tokio::task;
 use toml::{value::Table, Value};
 use wayland_clipboard_listener::{WlClipboardPasteStream, WlListenType};
 use wl_clipboard_rs::copy::{MimeSource, MimeType, Options, Source};
@@ -23,8 +23,7 @@ struct Args {
     record: Option<String>,
 }
 
-#[tokio::main]
-async fn main() {
+fn main() {
     let args = Args::parse();
 
     let xdg_dirs = BaseDirectories::with_prefix("clapboard").unwrap();
@@ -77,17 +76,16 @@ async fn main() {
         let tasks: Vec<_> = listeners
             .iter()
             .map(|&paste_type| {
-                task::spawn(listen_to_clipboard(
-                    paste_type,
-                    cache_dir.clone(),
-                    history_size,
-                ))
+                thread::spawn({
+                    let value = cache_dir.clone();
+                    move || listen_to_clipboard(paste_type, value.clone(), history_size)
+                })
             })
             .collect();
 
         // Await each task individually
         for task in tasks {
-            let _ = task.await;
+            let _ = task.join();
         }
     } else {
         let mut data: IndexMap<String, String> = IndexMap::new();
@@ -205,7 +203,7 @@ async fn main() {
     }
 }
 
-async fn listen_to_clipboard(paste_type: &str, cache_dir: PathBuf, history_size: usize) {
+fn listen_to_clipboard(paste_type: &str, cache_dir: PathBuf, history_size: usize) {
     let mut stream = WlClipboardPasteStream::init(match paste_type {
         "primary" => WlListenType::ListenOnSelect,
         _ => WlListenType::ListenOnCopy,
