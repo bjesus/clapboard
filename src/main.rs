@@ -141,8 +141,7 @@ fn history(config: &Config, cache_dir: impl AsRef<Path>) -> Res<()> {
         .and_then(|mut child| {
             child.stdin.as_mut().unwrap().write_all(input.as_bytes())?;
             child.wait_with_output()
-        })
-        .expect("Cannot start your launcher, please confirm you have {command_name} installed or configure another one");
+        }).map_err(|e| format!("cannot start your launcher, please confirm you have {command_name} installed or configure another one: {e:?}"))?;
 
     let result = String::from_utf8_lossy(&output.stdout).trim().to_owned();
     if result.is_empty() {
