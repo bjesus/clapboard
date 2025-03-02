@@ -3,15 +3,15 @@ use indexmap::IndexMap;
 use std::{
     fs::{self, File},
     io::{self, copy, Read, Write},
-    path::{Path, PathBuf},
+    path::Path,
     process::{Command, Stdio},
     thread,
     time::{SystemTime, UNIX_EPOCH},
 };
-use toml::{value::Table, Value};
+use toml::{map::Map, value::Table, Value};
 use wayland_clipboard_listener::{WlClipboardPasteStream, WlListenType};
-use wl_clipboard_rs::copy::{MimeSource, MimeType, Options, Source};
-use wl_clipboard_rs::paste::{get_contents, ClipboardType, Seat};
+use wl_clipboard_rs::copy::{MimeSource, MimeType as CopyMimeType, Options, Source};
+use wl_clipboard_rs::paste::{get_contents, ClipboardType, MimeType as PasteMimeType, Seat};
 use xdg::BaseDirectories;
 
 /// Clapboard, a clipboard manager for Wayland
@@ -34,29 +34,9 @@ fn main() {
     let toml_string = fs::read_to_string(config_path).unwrap_or_default();
     let value: Value = toml::from_str(&toml_string).unwrap();
 
-    let default_launcher = ["tofi", "--fuzzy-match=true", "--prompt-text=clapboard: "];
-
-    let default_launcher_values: Vec<Value> = default_launcher
-        .iter()
-        .map(|x| Value::String((*x).to_string()))
-        .collect();
-    let default_launcher_value = Value::Array(default_launcher_values);
-    let launcher = value
-        .get("launcher")
-        .unwrap_or(&default_launcher_value)
-        .as_array();
-
-    let history_size = value
-        .get("history_size")
-        .and_then(Value::as_integer)
-        .unwrap_or(50) as usize;
-
-    let default_favorites_value = Value::Table(Table::new());
-    let favorites = value
-        .get("favorites")
-        .unwrap_or(&default_favorites_value)
-        .as_table()
-        .unwrap();
+    let defaults = get_config_defaults();
+    let (launcher, history_size, favorites) =
+        read_config(&value, &defaults.0, defaults.1, &defaults.2);
 
     let cache_dir = xdg_dirs.get_cache_home();
 
@@ -77,8 +57,8 @@ fn main() {
             .iter()
             .map(|&paste_type| {
                 thread::spawn({
-                    let value = cache_dir.clone();
-                    move || listen_to_clipboard(paste_type, value.clone(), history_size)
+                    let cache_dir = cache_dir.clone();
+                    move || listen_to_clipboard(paste_type, cache_dir, history_size)
                 })
             })
             .collect();
@@ -88,127 +68,167 @@ fn main() {
             let _ = task.join();
         }
     } else {
-        let mut data: IndexMap<String, String> = IndexMap::new();
+        history(launcher, favorites, cache_dir);
+    }
+}
 
-        let mut entries: Vec<_> = fs::read_dir(&cache_dir)
-            .unwrap() // Handle the Result from read_dir
-            .flatten() // Flatten the Result<Option<DirEntry>> to just DirEntry
-            .collect(); // Collect into a vector of DirEntry
+fn get_config_defaults() -> (Vec<Value>, usize, Value) {
+    let default_launcher = ["tofi", "--fuzzy-match=true", "--prompt-text=clapboard: "];
+    let default_launcher_values: Vec<Value> = default_launcher
+        .iter()
+        .map(|x| Value::String((*x).to_string()))
+        .collect();
 
-        // Sort entries by file name (ascending order)
-        entries.sort_by(|a, b| b.file_name().cmp(&a.file_name()));
+    let default_favorites_value = Value::Table(Table::new());
+    (default_launcher_values, 50, default_favorites_value)
+}
 
-        // Iterate over sorted entries
-        for entry in entries {
-            if entry.path().is_dir() {
-                let timestamp = entry.file_name().into_string().unwrap_or_default();
-                let text_files = vec!["UTF8_STRING", "TEXT", "text.plain", "text.html", "STRING"];
-                let mut found_file = false;
-                let mut content = String::new();
-                for file_name in text_files {
-                    let textual_representation = entry.path().join(file_name);
+fn read_config<'a>(
+    value: &'a Value,
+    default_launcher: &'a Vec<Value>,
+    default_hist_size: usize,
+    default_favorites: &'a Value,
+) -> (&'a Vec<Value>, usize, &'a Map<String, Value>) {
+    let launcher = value
+        .get("launcher")
+        .map_or(default_launcher, |l| l.as_array().unwrap());
 
-                    if textual_representation.exists() {
-                        let mut file = File::open(&textual_representation).unwrap();
-                        if file.read_to_string(&mut content).is_ok() {
-                            found_file = true;
-                            break;
-                        }
+    let history_size = value
+        .get("history_size")
+        .and_then(Value::as_integer)
+        .map_or(default_hist_size, |n| n as usize);
+
+    let favorites = value
+        .get("favorites")
+        .unwrap_or(default_favorites)
+        .as_table()
+        .unwrap();
+    (launcher, history_size, favorites)
+}
+
+fn history(launcher: &[Value], favorites: &Map<String, Value>, cache_dir: impl AsRef<Path>) {
+    let mut data: IndexMap<String, String> = IndexMap::new();
+
+    let mut entries: Vec<_> = fs::read_dir(&cache_dir)
+        .unwrap() // Handle the Result from read_dir
+        .flatten() // Flatten the Result<Option<DirEntry>> to just DirEntry
+        .collect();
+    // Collect into a vector of DirEntry
+
+    // Sort entries by file name (ascending order)
+    entries.sort_by(|a, b| b.file_name().cmp(&a.file_name()));
+
+    // Iterate over sorted entries
+    for entry in entries {
+        if entry.path().is_dir() {
+            let timestamp = entry.file_name().into_string().unwrap_or_default();
+            let text_files = vec!["UTF8_STRING", "TEXT", "text.plain", "text.html", "STRING"];
+            let mut found_file = false;
+            let mut content = String::new();
+            for file_name in text_files {
+                let textual_representation = entry.path().join(file_name);
+
+                if textual_representation.exists() {
+                    let mut file = File::open(&textual_representation).unwrap();
+                    if file.read_to_string(&mut content).is_ok() {
+                        found_file = true;
+                        break;
                     }
                 }
-                if found_file {
-                    data.insert(
-                        content
-                            .trim()
-                            .to_string()
-                            .replace('\n', " ")
-                            .chars()
-                            .take(50) // Avoid long text
-                            .collect(),
-                        timestamp.to_string(),
-                    );
-                } else {
-                    // If no file was found, proceed with the else logic
-                    println!("No textfile found for: {timestamp}");
-                    data.entry(timestamp.to_string())
-                        .or_insert_with(|| timestamp.to_string());
-                }
+            }
+            if found_file {
+                data.insert(
+                    content
+                        .trim()
+                        .to_string()
+                        .replace('\n', " ")
+                        .chars()
+                        .take(50) // Avoid long text
+                        .collect(),
+                    timestamp.to_string(),
+                );
+            } else {
+                // If no file was found, proceed with the else logic
+                println!("No textfile found for: {timestamp}");
+                data.entry(timestamp.to_string())
+                    .or_insert_with(|| timestamp.to_string());
             }
         }
-        for (key, value) in favorites {
-            data.entry(key.parse().unwrap())
-                .or_insert_with(|| value.as_str().unwrap().to_string());
-        }
+    }
+    for (key, value) in favorites {
+        data.entry(key.parse().unwrap())
+            .or_insert_with(|| value.as_str().unwrap().to_string());
+    }
 
-        let input = data.keys().cloned().collect::<Vec<_>>().join("\n");
-        let command_name = launcher.unwrap()[0].as_str().unwrap();
-        let mut command = Command::new(command_name);
-        for arg in &launcher.unwrap()[1..] {
-            command.arg(arg.as_str().unwrap());
-        }
+    let input = data.keys().cloned().collect::<Vec<_>>().join("\n");
+    let command_name = launcher[0].as_str().unwrap();
+    let mut command = Command::new(command_name);
+    for arg in &launcher[1..] {
+        command.arg(arg.as_str().unwrap());
+    }
 
-        let output = command
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .spawn()
-            .and_then(|mut child| {
-                child.stdin.as_mut().unwrap().write_all(input.as_bytes())?;
-                child.wait_with_output()
-            })
-        .unwrap_or_else(|_| panic!("Cannot start your launcher, please confirm you have {command_name} installed or configure another one"));
+    let output = command
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .and_then(|mut child| {
+            child.stdin.as_mut().unwrap().write_all(input.as_bytes())?;
+            child.wait_with_output()
+        })
+    .unwrap_or_else(|_| panic!("Cannot start your launcher, please confirm you have {command_name} installed or configure another one"));
 
-        let mut result = String::from_utf8_lossy(&output.stdout).into_owned();
-        result.pop(); // Remove trailing new line
-        if !result.is_empty() {
-            let mut opts = Options::new();
-            opts.foreground(true); // We need to keep the process alive for pasting to work
-            if favorites.contains_key(&result) {
-                opts.copy(
-                    Source::Bytes(
-                        data.get(&result)
-                            .unwrap()
-                            .to_string()
-                            .into_bytes()
-                            .into_boxed_slice(),
-                    ),
-                    MimeType::Autodetect,
-                )
-                .expect("Failed to copy to clipboard");
-            } else {
-                let prefix = data.get(&result).unwrap().as_str();
-                let sources: Vec<MimeSource> =
-                    fs::read_dir(format!("{}{}", cache_dir.to_str().unwrap(), prefix))
+    let mut result = String::from_utf8_lossy(&output.stdout).into_owned();
+    result.pop();
+    // Remove trailing new line
+    if !result.is_empty() {
+        let mut opts = Options::new();
+        opts.foreground(true); // We need to keep the process alive for pasting to work
+        if favorites.contains_key(&result) {
+            opts.copy(
+                Source::Bytes(
+                    data.get(&result)
                         .unwrap()
-                        .flatten()
-                        .filter_map(|entry| {
-                            let path = entry.path();
-                            let mime_type = path
-                                .file_name()?
-                                .to_string_lossy()
-                                .to_string()
-                                .replacen('.', "/", 1);
-                            fs::read(&path).ok().map(|contents| MimeSource {
-                                source: Source::Bytes(contents.into()),
-                                mime_type: MimeType::Specific(mime_type),
-                            })
+                        .to_string()
+                        .into_bytes()
+                        .into_boxed_slice(),
+                ),
+                CopyMimeType::Autodetect,
+            )
+            .expect("Failed to copy to clipboard");
+        } else {
+            let prefix = data.get(&result).unwrap().as_str();
+            let sources: Vec<MimeSource> =
+                fs::read_dir(format!("{}{prefix}", cache_dir.as_ref().display()))
+                    .unwrap()
+                    .flatten()
+                    .filter_map(|entry| {
+                        let path = entry.path();
+                        let mime_type = path
+                            .file_name()?
+                            .to_string_lossy()
+                            .to_string()
+                            .replacen('.', "/", 1);
+                        fs::read(&path).ok().map(|contents| MimeSource {
+                            source: Source::Bytes(contents.into()),
+                            mime_type: CopyMimeType::Specific(mime_type),
                         })
-                        .collect();
+                    })
+                    .collect();
 
-                if !sources.is_empty() {
-                    opts.copy_multi(sources)
-                        .expect("Failed to copy to clipboard");
-                }
+            if !sources.is_empty() {
+                opts.copy_multi(sources)
+                    .expect("Failed to copy to clipboard");
             }
         }
     }
 }
 
-fn listen_to_clipboard(paste_type: &str, cache_dir: PathBuf, history_size: usize) {
-    let mut stream = WlClipboardPasteStream::init(match paste_type {
+fn listen_to_clipboard(paste_type: &str, cache_dir: impl AsRef<Path>, history_size: usize) {
+    let listentype = match paste_type {
         "primary" => WlListenType::ListenOnSelect,
         _ => WlListenType::ListenOnCopy,
-    })
-    .unwrap();
+    };
+    let mut stream = WlClipboardPasteStream::init(listentype).unwrap();
 
     for context in stream.paste_stream().flatten().flatten() {
         let timestamp = SystemTime::now()
@@ -216,26 +236,24 @@ fn listen_to_clipboard(paste_type: &str, cache_dir: PathBuf, history_size: usize
             .unwrap()
             .as_millis();
         for mime in context.mime_types {
-            match get_contents(
-                match paste_type {
-                    "primary" => ClipboardType::Primary,
-                    _ => ClipboardType::Regular,
-                },
-                Seat::Unspecified,
-                wl_clipboard_rs::paste::MimeType::Specific(&mime),
-            ) {
+            let clip_type = match paste_type {
+                "primary" => ClipboardType::Primary,
+                _ => ClipboardType::Regular,
+            };
+            match get_contents(clip_type, Seat::Unspecified, PasteMimeType::Specific(&mime)) {
                 Ok((mut reader, _)) => {
-                    let path = format!("{}{}", cache_dir.to_str().unwrap(), timestamp);
-                    fs::create_dir_all(Path::new(&path)).unwrap();
-                    let file_path = format!("{}/{}", &path, mime.replace('/', "."));
+                    let dir = cache_dir.as_ref().join(timestamp.to_string());
+                    fs::create_dir_all(&dir).unwrap();
+                    let file_path = dir.join(mime.replace('/', "."));
+                    let file_path_disp = file_path.display();
                     match File::create(&file_path) {
                         Ok(mut file) => {
-                            if let Err(e) = copy(&mut reader, &mut file) {
-                                eprintln!("Failed to copy content to {file_path}: {e}");
-                            }
+                            let _ = copy(&mut reader, &mut file).inspect_err(|e| {
+                                eprintln!("Failed to copy content to {file_path_disp}: {e}");
+                            });
                         }
                         Err(e) => {
-                            eprintln!("Failed to create file {file_path}: {e}");
+                            eprintln!("Failed to create file {file_path_disp}: {e}");
                         }
                     }
                 }
@@ -246,25 +264,19 @@ fn listen_to_clipboard(paste_type: &str, cache_dir: PathBuf, history_size: usize
     }
 }
 
-fn clean_history(directory: &Path, max: usize) -> io::Result<()> {
-    let mut entries: Vec<_> = fs::read_dir(directory)?
-        .filter_map(Result::ok) // Ignore any errors in reading entries
-        .collect();
+fn clean_history(directory: impl AsRef<Path>, max: usize) -> io::Result<()> {
+    let mut entries: Vec<_> = fs::read_dir(directory)?.filter_map(Result::ok).collect();
 
     entries.sort_by(|a, b| b.file_name().cmp(&a.file_name()));
 
-    for (index, entry) in entries.into_iter().enumerate() {
-        if index > max {
-            let path = entry.path();
-            if path.is_dir()
-                && !path
-                    .file_name()
-                    .unwrap_or_default()
-                    .to_string_lossy()
-                    .starts_with('.')
-            {
-                fs::remove_dir_all(&path)?;
-            }
+    for entry in entries.into_iter().skip(max) {
+        let path = entry.path();
+        if path.is_dir()
+            && path
+                .file_stem()
+                .is_some_and(|p| p.to_str().is_some_and(|s| s.starts_with('.')))
+        {
+            fs::remove_dir_all(&path)?;
         }
     }
     Ok(())
