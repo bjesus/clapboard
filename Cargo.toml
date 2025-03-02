@@ -11,4 +11,3 @@ toml = "0.5.10"
 wl-clipboard-rs = "0.9.1"
 wayland-clipboard-listener = "0.2.6"
 clap = { version = "4.5.23", features = ["derive"] }
-indexmap = { version = "2.7.0", features = ["std"] }
