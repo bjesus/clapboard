@@ -14,6 +14,8 @@ use wl_clipboard_rs::copy::{MimeSource, MimeType as CopyMimeType, Options, Sourc
 use wl_clipboard_rs::paste::{get_contents, ClipboardType, MimeType as PasteMimeType, Seat};
 use xdg::BaseDirectories;
 
+type Res<T> = Result<T, Box<dyn std::error::Error>>;
+
 /// Clapboard, a clipboard manager for Wayland
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
@@ -23,16 +25,16 @@ struct Args {
     record: Option<String>,
 }
 
-fn main() {
+fn main() -> Res<()> {
     let args = Args::parse();
 
-    let xdg_dirs = BaseDirectories::with_prefix("clapboard").unwrap();
+    let xdg_dirs = BaseDirectories::with_prefix("clapboard")?;
     let config_path = xdg_dirs
         .place_config_file("config.toml")
         .expect("cannot create configuration directory");
 
     let toml_string = fs::read_to_string(config_path).unwrap_or_default();
-    let value: Value = toml::from_str(&toml_string).unwrap();
+    let value: Value = toml::from_str(&toml_string)?;
 
     let defaults = get_config_defaults();
     let (launcher, history_size, favorites) =
@@ -58,18 +60,19 @@ fn main() {
             .map(|&paste_type| {
                 thread::spawn({
                     let cache_dir = cache_dir.clone();
-                    move || listen_to_clipboard(paste_type, cache_dir, history_size)
+                    move || listen_to_clipboard(paste_type, cache_dir, history_size).unwrap()
                 })
             })
             .collect();
 
         // Await each task individually
         for task in tasks {
-            let _ = task.join();
+            let _ = task.join().inspect_err(|e| eprintln!("error: {e:?}"));
         }
     } else {
-        history(launcher, favorites, cache_dir);
+        history(launcher, favorites, cache_dir)?;
     }
+    Ok(())
 }
 
 fn get_config_defaults() -> (Vec<Value>, usize, Value) {
@@ -106,14 +109,14 @@ fn read_config<'a>(
     (launcher, history_size, favorites)
 }
 
-fn history(launcher: &[Value], favorites: &Map<String, Value>, cache_dir: impl AsRef<Path>) {
+fn history(
+    launcher: &[Value],
+    favorites: &Map<String, Value>,
+    cache_dir: impl AsRef<Path>,
+) -> Res<()> {
     let mut data: IndexMap<String, String> = IndexMap::new();
 
-    let mut entries: Vec<_> = fs::read_dir(&cache_dir)
-        .unwrap() // Handle the Result from read_dir
-        .flatten() // Flatten the Result<Option<DirEntry>> to just DirEntry
-        .collect();
-    // Collect into a vector of DirEntry
+    let mut entries: Vec<_> = fs::read_dir(&cache_dir)?.flatten().collect();
 
     // Sort entries by file name (ascending order)
     entries.sort_by(|a, b| b.file_name().cmp(&a.file_name()));
@@ -129,7 +132,7 @@ fn history(launcher: &[Value], favorites: &Map<String, Value>, cache_dir: impl A
                 let textual_representation = entry.path().join(file_name);
 
                 if textual_representation.exists() {
-                    let mut file = File::open(&textual_representation).unwrap();
+                    let mut file = File::open(&textual_representation)?;
                     if file.read_to_string(&mut content).is_ok() {
                         found_file = true;
                         break;
@@ -156,12 +159,12 @@ fn history(launcher: &[Value], favorites: &Map<String, Value>, cache_dir: impl A
         }
     }
     for (key, value) in favorites {
-        data.entry(key.parse().unwrap())
+        data.entry(key.parse()?)
             .or_insert_with(|| value.as_str().unwrap().to_string());
     }
 
     let input = data.keys().cloned().collect::<Vec<_>>().join("\n");
-    let command_name = launcher[0].as_str().unwrap();
+    let command_name = launcher[0].as_str().ok_or("can't find launcher")?;
     let mut command = Command::new(command_name);
     for arg in &launcher[1..] {
         command.arg(arg.as_str().unwrap());
@@ -198,8 +201,7 @@ fn history(launcher: &[Value], favorites: &Map<String, Value>, cache_dir: impl A
         } else {
             let prefix = data.get(&result).unwrap().as_str();
             let sources: Vec<MimeSource> =
-                fs::read_dir(format!("{}{prefix}", cache_dir.as_ref().display()))
-                    .unwrap()
+                fs::read_dir(format!("{}{prefix}", cache_dir.as_ref().display()))?
                     .flatten()
                     .filter_map(|entry| {
                         let path = entry.path();
@@ -221,20 +223,18 @@ fn history(launcher: &[Value], favorites: &Map<String, Value>, cache_dir: impl A
             }
         }
     }
+    Ok(())
 }
 
-fn listen_to_clipboard(paste_type: &str, cache_dir: impl AsRef<Path>, history_size: usize) {
+fn listen_to_clipboard(paste_type: &str, cache_dir: impl AsRef<Path>, hist_size: usize) -> Res<()> {
     let listentype = match paste_type {
         "primary" => WlListenType::ListenOnSelect,
         _ => WlListenType::ListenOnCopy,
     };
-    let mut stream = WlClipboardPasteStream::init(listentype).unwrap();
+    let mut stream = WlClipboardPasteStream::init(listentype)?;
 
     for context in stream.paste_stream().flatten().flatten() {
-        let timestamp = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_millis();
+        let timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis();
         for mime in context.mime_types {
             let clip_type = match paste_type {
                 "primary" => ClipboardType::Primary,
@@ -243,7 +243,7 @@ fn listen_to_clipboard(paste_type: &str, cache_dir: impl AsRef<Path>, history_si
             match get_contents(clip_type, Seat::Unspecified, PasteMimeType::Specific(&mime)) {
                 Ok((mut reader, _)) => {
                     let dir = cache_dir.as_ref().join(timestamp.to_string());
-                    fs::create_dir_all(&dir).unwrap();
+                    fs::create_dir_all(&dir)?;
                     let file_path = dir.join(mime.replace('/', "."));
                     let file_path_disp = file_path.display();
                     match File::create(&file_path) {
@@ -260,8 +260,9 @@ fn listen_to_clipboard(paste_type: &str, cache_dir: impl AsRef<Path>, history_si
                 Err(err) => eprintln!("Clipboard {paste_type:?} error: {err}"),
             }
         }
-        clean_history(&cache_dir, history_size).unwrap();
+        clean_history(&cache_dir, hist_size)?;
     }
+    Ok(())
 }
 
 fn clean_history(directory: impl AsRef<Path>, max: usize) -> io::Result<()> {
