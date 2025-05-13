@@ -12,3 +12,4 @@ wayland-clipboard-listener = "0.2.6"
 clap = { version = "4.5.31", features = ["derive"] }
 basic-toml = "0.1.9"
 serde = { version = "1.0.218", features = ["derive"] }
+indexmap = "2.9.0"

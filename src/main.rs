@@ -1,6 +1,7 @@
 use clap::Parser;
+use indexmap::IndexMap;
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::BTreeMap,
     fs::{self, File},
     io::{self, Read, Write},
     path::Path,
@@ -89,7 +90,7 @@ fn main() -> Res<()> {
 }
 
 fn history(config: &Config, cache_dir: impl AsRef<Path>) -> Res<()> {
-    let mut data = HashMap::new();
+    let mut data = IndexMap::new();
 
     let mut entries: Vec<_> = fs::read_dir(&cache_dir)?.flatten().collect();
     // Sort entries by file name (ascending order)
