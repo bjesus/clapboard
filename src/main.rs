@@ -70,14 +70,11 @@ async fn main() {
     match args.record {
         Some(record) => {
             println!("Clapboard recording {record}...");
-            let listeners = if record == "primary" {
-                vec!["primary"]
-            } else if record == "clipboard" {
-                vec!["clipboard"]
-            } else if record == "both" {
-                vec!["primary", "clipboard"]
-            } else {
-                vec![]
+            let listeners = match record.as_str() {
+                "primary" => vec!["primary"],
+                "clipboard" => vec!["clipboard"],
+                "both" => vec!["primary", "clipboard"],
+                _ => vec![],
             };
 
             // Spawn tasks for each listener
