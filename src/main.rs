@@ -248,7 +248,10 @@ async fn listen_to_clipboard(paste_type: &str, cache_dir: PathBuf, history_size:
                         }
                     }
                 }
-                Err(err) => eprintln!("Clipboard {paste_type:?} error: {}", err),
+                Err(err) => eprintln!(
+                    "Clipboard {paste_type:?} warning for mime type {}: {}",
+                    mime, err
+                ),
             }
         }
         clean_history(&cache_dir, history_size).unwrap();
