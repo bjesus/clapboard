@@ -110,6 +110,9 @@ async fn main() {
             for entry in entries {
                 if entry.path().is_dir() {
                     let timestamp = entry.file_name().into_string().unwrap_or_default();
+                    if timestamp.starts_with(".") {
+                        continue;
+                    }
                     let text_files =
                         vec!["UTF8_STRING", "TEXT", "text.plain", "text.html", "STRING"];
                     let mut found_file = false;
