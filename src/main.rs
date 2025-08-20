@@ -121,7 +121,9 @@ async fn main() {
                         let textual_representation = entry.path().join(file_name);
 
                         if fs::metadata(&textual_representation).await.is_ok() {
-                            if let Ok(read_content) = fs::read_to_string(&textual_representation).await {
+                            if let Ok(read_content) =
+                                fs::read_to_string(&textual_representation).await
+                            {
                                 content = read_content;
                                 found_file = true;
                                 break;
