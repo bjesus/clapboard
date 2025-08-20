@@ -131,6 +131,7 @@ async fn main() {
                                 .trim()
                                 .to_string()
                                 .replace("\n", " ")
+                                .replace("\0", "")
                                 .chars()
                                 .take(50) // Avoid long text
                                 .collect(),
