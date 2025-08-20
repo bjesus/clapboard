@@ -3,15 +3,12 @@ use indexmap::IndexMap;
 use std::path::Path;
 use std::path::PathBuf;
 use std::{
-    fs,
-    io::{self, Read, Write},
-    process::{Command, Stdio},
-};
-use std::{
-    fs::File,
-    io::copy,
+    io,
     time::{SystemTime, UNIX_EPOCH},
 };
+use tokio::fs;
+use tokio::io::AsyncWriteExt;
+use tokio::process::Command;
 use tokio::task;
 use toml::Value;
 use wayland_clipboard_listener::WlClipboardPasteStream;
@@ -38,7 +35,9 @@ async fn main() {
         .place_config_file("config.toml")
         .expect("cannot create configuration directory");
 
-    let toml_string = fs::read_to_string(config_path).unwrap_or(String::from(""));
+    let toml_string = fs::read_to_string(config_path)
+        .await
+        .unwrap_or(String::from(""));
     let value: Value = toml::from_str(&toml_string).unwrap();
 
     let default_launcher = vec!["tofi", "--fuzzy-match=true", "--prompt-text=clapboard: "];
@@ -97,10 +96,12 @@ async fn main() {
         None => {
             let mut data: IndexMap<String, String> = IndexMap::new();
 
-            let mut entries: Vec<_> = fs::read_dir(&cache_dir)
-                .unwrap() // Handle the Result from read_dir
-                .flatten() // Flatten the Result<Option<DirEntry>> to just DirEntry
-                .collect(); // Collect into a vector of DirEntry
+            let mut entries = vec![];
+            if let Ok(mut read_dir) = fs::read_dir(&cache_dir).await {
+                while let Ok(Some(entry)) = read_dir.next_entry().await {
+                    entries.push(entry);
+                }
+            }
 
             // Sort entries by file name (ascending order)
             entries.sort_by(|a, b| b.file_name().cmp(&a.file_name()));
@@ -116,9 +117,9 @@ async fn main() {
                     for file_name in text_files {
                         let textual_representation = entry.path().join(file_name);
 
-                        if textual_representation.exists() {
-                            let mut file = File::open(&textual_representation).unwrap();
-                            if file.read_to_string(&mut content).is_ok() {
+                        if fs::metadata(&textual_representation).await.is_ok() {
+                            if let Ok(read_content) = fs::read_to_string(&textual_representation).await {
+                                content = read_content;
                                 found_file = true;
                                 break;
                             }
@@ -155,15 +156,17 @@ async fn main() {
                 command.arg(arg.as_str().unwrap());
             }
 
-            let output = command
-                .stdin(Stdio::piped())
-                .stdout(Stdio::piped())
+            let mut child = command
+                .stdin(std::process::Stdio::piped())
+                .stdout(std::process::Stdio::piped())
                 .spawn()
-                .and_then(|mut child| {
-                    child.stdin.as_mut().unwrap().write_all(input.as_bytes())?;
-                    child.wait_with_output()
-                })
-            .unwrap_or_else(|_| panic!("Cannot start your launcher, please confirm you have {} installed or configure another one", command_name));
+                .unwrap_or_else(|_| panic!("Cannot start your launcher, please confirm you have {} installed or configure another one", command_name));
+
+            if let Some(mut stdin) = child.stdin.take() {
+                stdin.write_all(input.as_bytes()).await.unwrap();
+            }
+
+            let output = child.wait_with_output().await.unwrap();
 
             let mut result = String::from_utf8_lossy(&output.stdout).into_owned();
             result.pop(); // Remove trailing new line
@@ -184,23 +187,25 @@ async fn main() {
                     .expect("Failed to copy to clipboard");
                 } else {
                     let prefix = data.get(&result).unwrap().as_str();
-                    let sources: Vec<MimeSource> =
-                        fs::read_dir(format!("{}{}", cache_dir.to_str().unwrap(), prefix))
-                            .unwrap()
-                            .flatten()
-                            .filter_map(|entry| {
-                                let path = entry.path();
-                                let mime_type = path
-                                    .file_name()?
+                    let mut sources = Vec::new();
+                    let dir_path = format!("{}{}", cache_dir.to_str().unwrap(), prefix);
+                    if let Ok(mut read_dir) = fs::read_dir(dir_path).await {
+                        while let Ok(Some(entry)) = read_dir.next_entry().await {
+                            let path = entry.path();
+                            if let Some(file_name) = path.file_name() {
+                                let mime_type = file_name
                                     .to_string_lossy()
                                     .to_string()
                                     .replacen(".", "/", 1);
-                                fs::read(&path).ok().map(|contents| MimeSource {
-                                    source: Source::Bytes(contents.into()),
-                                    mime_type: MimeType::Specific(mime_type),
-                                })
-                            })
-                            .collect();
+                                if let Ok(contents) = fs::read(&path).await {
+                                    sources.push(MimeSource {
+                                        source: Source::Bytes(contents.into()),
+                                        mime_type: MimeType::Specific(mime_type),
+                                    });
+                                }
+                            }
+                        }
+                    }
 
                     if !sources.is_empty() {
                         opts.copy_multi(sources)
@@ -235,16 +240,22 @@ async fn listen_to_clipboard(paste_type: &str, cache_dir: PathBuf, history_size:
             ) {
                 Ok((mut reader, _)) => {
                     let path = format!("{}{}", cache_dir.to_str().unwrap(), timestamp);
-                    fs::create_dir_all(Path::new(&path)).unwrap();
+                    fs::create_dir_all(Path::new(&path)).await.unwrap();
                     let file_path = format!("{}/{}", &path, mime.replace("/", "."));
-                    match File::create(&file_path) {
-                        Ok(mut file) => {
-                            if let Err(e) = copy(&mut reader, &mut file) {
-                                eprintln!("Failed to copy content to {}: {}", file_path, e);
-                            }
+                    let file_path_clone = file_path.clone();
+                    let copy_result = task::spawn_blocking(move || -> std::io::Result<u64> {
+                        let mut file = std::fs::File::create(&file_path_clone)?;
+                        std::io::copy(&mut reader, &mut file)
+                    })
+                    .await;
+
+                    match copy_result {
+                        Ok(Ok(_)) => (), // Success
+                        Ok(Err(io_err)) => {
+                            eprintln!("Failed to copy content to {}: {}", file_path, io_err);
                         }
-                        Err(e) => {
-                            eprintln!("Failed to create file {}: {}", file_path, e);
+                        Err(join_err) => {
+                            eprintln!("Blocking task for copy failed: {}", join_err);
                         }
                     }
                 }
@@ -254,14 +265,17 @@ async fn listen_to_clipboard(paste_type: &str, cache_dir: PathBuf, history_size:
                 ),
             }
         }
-        clean_history(&cache_dir, history_size).unwrap();
+        clean_history(&cache_dir, history_size).await.unwrap();
     }
 }
 
-fn clean_history(directory: &Path, max: usize) -> io::Result<()> {
-    let mut entries: Vec<_> = fs::read_dir(directory)?
-        .filter_map(|entry| entry.ok()) // Ignore any errors in reading entries
-        .collect();
+async fn clean_history(directory: &Path, max: usize) -> io::Result<()> {
+    let mut entries = vec![];
+    if let Ok(mut read_dir) = fs::read_dir(directory).await {
+        while let Ok(Some(entry)) = read_dir.next_entry().await {
+            entries.push(entry);
+        }
+    }
 
     entries.sort_by(|a, b| b.file_name().cmp(&a.file_name()));
 
@@ -275,7 +289,7 @@ fn clean_history(directory: &Path, max: usize) -> io::Result<()> {
                     .to_string_lossy()
                     .starts_with('.')
             {
-                fs::remove_dir_all(&path)?;
+                fs::remove_dir_all(&path).await?;
             }
         }
     }
