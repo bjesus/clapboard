@@ -42,15 +42,16 @@ async fn main() {
 
     let default_launcher = vec!["tofi", "--fuzzy-match=true", "--prompt-text=clapboard: "];
 
-    let default_launcher_values: Vec<Value> = default_launcher
-        .iter()
-        .map(|x| Value::String(x.to_string()))
-        .collect();
-    let default_launcher_value = Value::Array(default_launcher_values);
-    let launcher = value
+    let launcher_vec: Vec<String> = value
         .get("launcher")
-        .unwrap_or_else(|| &default_launcher_value)
-        .as_array();
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                .collect::<Vec<_>>()
+        })
+        .filter(|v| !v.is_empty())
+        .unwrap_or_else(|| default_launcher.iter().map(|s| s.to_string()).collect());
 
     let history_size = value
         .get("history_size")
@@ -156,10 +157,10 @@ async fn main() {
             }
 
             let input = data.keys().cloned().collect::<Vec<_>>().join("\n");
-            let command_name = launcher.unwrap()[0].as_str().unwrap();
+            let command_name = launcher_vec.get(0).map(|s| s.as_str()).unwrap_or("tofi");
             let mut command = Command::new(command_name);
-            for arg in &launcher.unwrap()[1..] {
-                command.arg(arg.as_str().unwrap());
+            for arg in launcher_vec.iter().skip(1) {
+                command.arg(arg);
             }
 
             let mut child = command
@@ -230,24 +231,25 @@ async fn listen_to_clipboard(paste_type: &str, cache_dir: PathBuf, history_size:
     })
     .unwrap();
 
-    for context in stream.paste_stream().flatten().flatten() {
+    for context in stream.paste_stream().flatten() {
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_millis();
-        for mime in context.mime_types {
+        for mime in context.mime_types.iter() {
+            let mime_str: &str = mime.as_ref();
             match get_contents(
                 match paste_type {
                     "primary" => ClipboardType::Primary,
                     _ => ClipboardType::Regular,
                 },
                 Seat::Unspecified,
-                wl_clipboard_rs::paste::MimeType::Specific(&mime),
+                wl_clipboard_rs::paste::MimeType::Specific(mime_str),
             ) {
                 Ok((mut reader, _)) => {
                     let path = format!("{}{}", cache_dir.to_str().unwrap(), timestamp);
                     fs::create_dir_all(Path::new(&path)).await.unwrap();
-                    let file_path = format!("{}/{}", &path, mime.replace("/", "."));
+                    let file_path = format!("{}/{}", &path, mime_str.replace("/", "."));
                     let file_path_clone = file_path.clone();
                     let copy_result = task::spawn_blocking(move || -> std::io::Result<u64> {
                         let mut file = std::fs::File::create(&file_path_clone)?;
@@ -267,7 +269,7 @@ async fn listen_to_clipboard(paste_type: &str, cache_dir: PathBuf, history_size:
                 }
                 Err(err) => eprintln!(
                     "Clipboard {paste_type:?} warning for mime type {}: {}",
-                    mime, err
+                    mime_str, err
                 ),
             }
         }

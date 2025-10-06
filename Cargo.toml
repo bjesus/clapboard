@@ -1,6 +1,6 @@
 [package]
 name = "clapboard"
-version = "1.1.0"
+version = "1.1.1"
 edition = "2021"
 license = "GPL-3.0"
 
@@ -10,7 +10,13 @@ license = "GPL-3.0"
 xdg = "2.5.2"
 toml = "0.8.22"
 wl-clipboard-rs = "0.9.2"
-wayland-clipboard-listener = "0.2.6"
+wayland-clipboard-listener = "0.5.0"
 clap = { version = "4.5.39", features = ["derive"] }
-tokio = { version = "1.45.1", features = ["full"] }
+tokio = { version = "1.45.1", features = [
+  "rt-multi-thread",
+  "macros",
+  "fs",
+  "io-util",
+  "process",
+] }
 indexmap = { version = "2.9.0", features = ["std"] }
